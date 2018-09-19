@@ -433,8 +433,13 @@ inline bool SliceForwardInferStorageType(const nnvm::NodeAttrs& attrs,
     trivial_step = true;
   }
   if (!dispatched && in_stype == kDefaultStorage) {
+    #if MXNET_USE_MKLDNN == 0
     dispatched = storage_type_assign(&out_stype, kDefaultStorage,
                                      dispatch_mode, DispatchMode::kFCompute);
+    #else
+    dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+                                     dispatch_mode, dispatch_ex);
+    #endif
   }
 
   if (!dispatched && in_stype == kCSRStorage && trivial_step) {
@@ -604,22 +609,6 @@ void SliceCsrImpl(const SliceParam &param, const OpContext& ctx,
   }
 }
 
-template<typename xpu>
-void SliceEx(const nnvm::NodeAttrs& attrs,
-             const OpContext& ctx,
-             const std::vector<NDArray>& inputs,
-             const std::vector<OpReqType>& req,
-             const std::vector<NDArray>& outputs) {
-  CHECK_EQ(inputs.size(), 1);
-  CHECK_EQ(outputs.size(), 1);
-  const SliceParam& param = nnvm::get<SliceParam>(attrs.parsed);
-  auto in_stype = inputs[0].storage_type();
-  if (in_stype == kCSRStorage) {
-    SliceCsrImpl<xpu>(param, ctx, inputs[0], req[0], outputs[0]);
-  } else {
-    LOG(FATAL) << "Slice not implemented for storage type" << in_stype;
-  }
-}
 
 template<int ndim>
 inline void GetIndexRange(const TShape& dshape,
@@ -1106,6 +1095,34 @@ struct SliceAxisParam : public dmlc::Parameter<SliceAxisParam> {
   }
 };
 
+inline bool SliceAxisForwardInferStorageType(const nnvm::NodeAttrs& attrs,
+                                            const int dev_mask,
+                                            DispatchMode* dispatch_mode,
+                                            std::vector<int>* in_attrs,
+                                            std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1);
+  CHECK_EQ(out_attrs->size(), 1);
+  const SliceAxisParam& param = nnvm::get<SliceAxisParam>(attrs.parsed);
+  const auto& in_stype = in_attrs->at(0);
+  auto& out_stype = out_attrs->at(0);
+  bool dispatched = false;
+  const auto dispatch_ex = DispatchMode::kFComputeEx;
+#if MXNET_USE_MKLDNN == 1
+  if (!dispatched && in_stype == kDefaultStorage) {
+    dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+                                     dispatch_mode, dispatch_ex);
+  }
+#else
+  dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+                                     dispatch_mode, DispatchMode::kFCompute);
+#endif
+  if (!dispatched) {
+    dispatched = dispatch_fallback(out_attrs, dispatch_mode);
+  }
+
+  return dispatched;
+}
+
 inline void GetSliceAxisParams(const SliceAxisParam& param, const TShape& ishape,
                            int* axis, int* begin, int* end) {
   *axis = param.axis;
@@ -1253,6 +1270,34 @@ struct SliceLikeParam : public dmlc::Parameter<SliceLikeParam> {
               "all axes. Negative axes are supported.");
   }
 };
+
+inline bool SliceLikeForwardInferStorageType(const nnvm::NodeAttrs& attrs,
+                                            const int dev_mask,
+                                            DispatchMode* dispatch_mode,
+                                            std::vector<int>* in_attrs,
+                                            std::vector<int>* out_attrs) {
+  CHECK_EQ(in_attrs->size(), 1);
+  CHECK_EQ(out_attrs->size(), 1);
+  const SliceLikeParam& param = nnvm::get<SliceLikeParam>(attrs.parsed);
+  const auto& in_stype = in_attrs->at(0);
+  auto& out_stype = out_attrs->at(0);
+  bool dispatched = false;
+  const auto dispatch_ex = DispatchMode::kFComputeEx;
+#if MXNET_USE_MKLDNN == 1
+  if (!dispatched && in_stype == kDefaultStorage) {
+    dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+                                     dispatch_mode, dispatch_ex);
+  }
+#else
+  dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+                                     dispatch_mode, DispatchMode::kFCompute);
+#endif
+  if (!dispatched) {
+    dispatched = dispatch_fallback(out_attrs, dispatch_mode);
+  }
+
+  return dispatched;
+}
 
 inline bool SliceLikeShape(const nnvm::NodeAttrs& attrs,
                            std::vector<TShape> *in_attrs,

@@ -27,6 +27,7 @@
 #include "./elemwise_unary_op.h"
 #include "../nn/mkldnn/mkldnn_ops-inl.h"
 #include "../nn/mkldnn/mkldnn_base-inl.h"
+#include "../nn/mkldnn/mkldnn_slice-inl.h"
 
 namespace mxnet {
 namespace op {
@@ -363,6 +364,27 @@ will return a new array with shape ``(2,1,3,4)``.
 .add_argument("data", "NDArray-or-Symbol", "Source input")
 .add_arguments(ExpandDimParam::__FIELDS__());
 
+template<typename xpu>
+void SliceEx(const nnvm::NodeAttrs& attrs,
+             const OpContext& ctx,
+             const std::vector<NDArray>& inputs,
+             const std::vector<OpReqType>& req,
+             const std::vector<NDArray>& outputs) {
+  CHECK_EQ(inputs.size(), 1);
+  CHECK_EQ(outputs.size(), 1);
+  const SliceParam& param = nnvm::get<SliceParam>(attrs.parsed);
+  auto in_stype = inputs[0].storage_type();
+  if (in_stype == kCSRStorage) {
+    SliceCsrImpl<xpu>(param, ctx, inputs[0], req[0], outputs[0]);
+#if MXNET_USE_MKLDNN == 1
+  } else if (in_stype == kDefaultStorage) { // For default storage, detect whether we are using MKLDNN or not
+    MKLDNNSlice(param, ctx, inputs[0], req[0], outputs[0]);
+#endif
+  } else {
+    LOG(FATAL) << "Slice not implemented for storage type" << in_stype;
+  }
+}
+
 NNVM_REGISTER_OP(slice)
 MXNET_ADD_SPARSE_OP_ALIAS(slice)
 .add_alias("crop")
@@ -475,6 +497,24 @@ NNVM_REGISTER_OP(_slice_assign_scalar)
 .add_argument("data", "NDArray-or-Symbol", "Source input")
 .add_arguments(SliceAssignScalarParam::__FIELDS__());
 
+template<typename xpu>
+void SliceAxisEx(const nnvm::NodeAttrs& attrs,
+             const OpContext& ctx,
+             const std::vector<NDArray>& inputs,
+             const std::vector<OpReqType>& req,
+             const std::vector<NDArray>& outputs) {
+  CHECK_EQ(inputs.size(), 1);
+  CHECK_EQ(outputs.size(), 1);
+  const SliceAxisParam& param = nnvm::get<SliceAxisParam>(attrs.parsed);
+  auto in_stype = inputs[0].storage_type();
+
+  if (in_stype == kDefaultStorage) {  // For kCSRStorage, go to SliceCsrImpl
+    MKLDNNSliceAxis(param, ctx, inputs[0], req[0], outputs[0]);
+  } else {
+    LOG(FATAL) << "MKLDNN Slice not implemented for this storage type" << in_stype;
+  }
+}
+
 NNVM_REGISTER_OP(slice_axis)
 .describe(R"code(Slices along a given axis.
 
@@ -503,7 +543,9 @@ Examples::
 .set_attr_parser(ParamParser<SliceAxisParam>)
 .set_attr<nnvm::FInferShape>("FInferShape", SliceAxisShape)
 .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<1, 1>)
+.set_attr<FInferStorageType>("FInferStorageType", SliceAxisForwardInferStorageType)
 .set_attr<FCompute>("FCompute<cpu>", SliceAxis<cpu>)
+.set_attr<FComputeEx>("FComputeEx<cpu>", SliceAxisEx<cpu>)
 .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_backward_slice_axis"})
 .add_argument("data", "NDArray-or-Symbol", "Source input")
 .add_arguments(SliceAxisParam::__FIELDS__());
@@ -514,6 +556,24 @@ NNVM_REGISTER_OP(_backward_slice_axis)
 .set_attr_parser(ParamParser<SliceAxisParam>)
 .set_attr<nnvm::TIsBackward>("TIsBackward", true)
 .set_attr<FCompute>("FCompute<cpu>", SliceAxisGrad_<cpu>);
+
+template<typename xpu>
+void SliceLikeEx(const nnvm::NodeAttrs& attrs,
+             const OpContext& ctx,
+             const std::vector<NDArray>& inputs,
+             const std::vector<OpReqType>& req,
+             const std::vector<NDArray>& outputs) {
+  CHECK_EQ(inputs.size(), 1);
+  CHECK_EQ(outputs.size(), 1);
+  const SliceLikeParam& param = nnvm::get<SliceLikeParam>(attrs.parsed);
+  auto in_stype = inputs[0].storage_type();
+
+  if (in_stype == kDefaultStorage) {  // For kCSRStorage, go to SliceCsrImpl
+    MKLDNNSliceLike(param, ctx, inputs, req, outputs);
+  } else {
+    LOG(FATAL) << "MKLDNN Slice not implemented for this storage type" << in_stype;
+  }
+}
 
 NNVM_REGISTER_OP(slice_like)
 .describe(R"code(Slices a region of the array like the shape of another array.
@@ -577,7 +637,9 @@ Example::
 .set_attr<nnvm::FInferShape>("FInferShape", SliceLikeShape)
 .set_attr<nnvm::FInferType>("FInferType", ElemwiseType<2, 1>)
 .set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_backward_slice_like"})
+.set_attr<FInferStorageType>("FInferStorageType", SliceLikeForwardInferStorageType)
 .set_attr<FCompute>("FCompute<cpu>", SliceLikeForward<cpu>)
+.set_attr<FComputeEx>("FComputeEx<cpu>", SliceLikeEx<cpu>)
 .add_argument("data", "NDArray-or-Symbol", "Source input")
 .add_argument("shape_like", "NDArray-or-Symbol", "Shape like input")
 .add_arguments(SliceLikeParam::__FIELDS__());
