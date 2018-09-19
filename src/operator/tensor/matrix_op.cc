@@ -563,13 +563,13 @@ void SliceLikeEx(const nnvm::NodeAttrs& attrs,
              const std::vector<NDArray>& inputs,
              const std::vector<OpReqType>& req,
              const std::vector<NDArray>& outputs) {
-  CHECK_EQ(inputs.size(), 1);
-  CHECK_EQ(outputs.size(), 1);
+  CHECK_EQ(inputs.size(), 2U);
+  CHECK_EQ(outputs.size(), 1U);
   const SliceLikeParam& param = nnvm::get<SliceLikeParam>(attrs.parsed);
   auto in_stype = inputs[0].storage_type();
 
   if (in_stype == kDefaultStorage) {  // For kCSRStorage, go to SliceCsrImpl
-    MKLDNNSliceLike(param, ctx, inputs, req, outputs);
+    MKLDNNSliceLike(param, ctx, inputs[0], req[0], outputs[0]);
   } else {
     LOG(FATAL) << "MKLDNN Slice not implemented for this storage type" << in_stype;
   }

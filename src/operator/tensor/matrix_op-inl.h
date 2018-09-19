@@ -1102,7 +1102,6 @@ inline bool SliceAxisForwardInferStorageType(const nnvm::NodeAttrs& attrs,
                                             std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1);
   CHECK_EQ(out_attrs->size(), 1);
-  const SliceAxisParam& param = nnvm::get<SliceAxisParam>(attrs.parsed);
   const auto& in_stype = in_attrs->at(0);
   auto& out_stype = out_attrs->at(0);
   bool dispatched = false;
@@ -1278,7 +1277,6 @@ inline bool SliceLikeForwardInferStorageType(const nnvm::NodeAttrs& attrs,
                                             std::vector<int>* out_attrs) {
   CHECK_EQ(in_attrs->size(), 1);
   CHECK_EQ(out_attrs->size(), 1);
-  const SliceLikeParam& param = nnvm::get<SliceLikeParam>(attrs.parsed);
   const auto& in_stype = in_attrs->at(0);
   auto& out_stype = out_attrs->at(0);
   bool dispatched = false;
