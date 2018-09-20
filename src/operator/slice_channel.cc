@@ -24,23 +24,42 @@
  * \author Bing Xu
 */
 
-#include "./slice_channel-inl.h"
+#include "./elemwise_op_common.h"
+#include "./nn/mkldnn/mkldnn_slice-inl.h"
 
 namespace mxnet {
 namespace op {
-template<>
-Operator* CreateOp<cpu>(SliceChannelParam param, int dtype) {
-  Operator* op = nullptr;
-  MSHADOW_TYPE_SWITCH(dtype, DType, {
-    op = new SliceChannelOp<cpu, DType>(param);
-  })
-  return op;
-}
+// template<>
+// Operator* CreateOp<cpu>(SliceChannelParam param, int dtype) {
+//   Operator* op = nullptr;
+//   MSHADOW_TYPE_SWITCH(dtype, DType, {
+//     op = new SliceChannelOp<cpu, DType>(param);
+//   })
+//   return op;
+// }
 
-Operator* SliceChannelProp::CreateOperatorEx(Context ctx,
-                                             std::vector<TShape>* in_shape,
-                                             std::vector<int>* in_type) const {
-  DO_BIND_DISPATCH(CreateOp, param_, (*in_type)[0]);
+// Operator* SliceChannelProp::CreateOperatorEx(Context ctx,
+//                                              std::vector<TShape>* in_shape,
+//                                              std::vector<int>* in_type) const {
+//   DO_BIND_DISPATCH(CreateOp, param_, (*in_type)[0]);
+// }
+
+template<typename xpu>
+void SliceChannelEx(const nnvm::NodeAttrs& attrs,
+                    const OpContext& ctx,
+                    const std::vector<NDArray>& inputs,
+                    const std::vector<OpReqType>& req,
+                    const std::vector<NDArray>& outputs) {
+  const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+  CHECK_EQ(inputs.size(), 1U);
+  CHECK_EQ(outputs.size(), static_cast<size_t>(param.num_outputs));
+  auto in_stype = inputs[0].storage_type();
+
+  if (in_stype == kDefaultStorage) {
+    MKLDNNSliceChannel(param, ctx, inputs[0], req[0], outputs);
+  } else {
+    LOG(FATAL) << "MKLDNN SliceChannel(split) is not implemented for this storage type" << in_stype;
+  }
 }
 
 DMLC_REGISTER_PARAMETER(SliceChannelParam);
@@ -108,16 +127,27 @@ Example::
 
 )code" ADD_FILELINE)
 .set_attr_parser(ParamParser<SliceChannelParam>)
+.set_num_inputs(1)
+.set_num_outputs([](const nnvm::NodeAttrs& attrs) {
+    const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+    return param.num_outputs;
+  })
 .set_attr<nnvm::FInferShape>("FInferShape", SliceChannelOpShape)
 .set_attr<nnvm::FInferType>("FInferType", SliceChannelInferType)
 .set_attr<FInferStorageType>("FInferStorageType", SliceChannelForwardInferStorageType)
+.set_attr<nnvm::FGradient>("FGradient", ElemwiseGradUseNone{"_backward_slice_channel"})
 .set_attr<FCompute>("FCompute<cpu>", SliceChannelForward<cpu>)
 .set_attr<FComputeEx>("FComputeEx<cpu>", SliceChannelEx<cpu>)
-.set_return_type("NDArray-or-Symbol[]")
+//.set_return_type("NDArray-or-Symbol[]")
 .add_argument("data", "NDArray-or-Symbol", "The input")
 .add_arguments(SliceChannelParam::__FIELDS__());
 
 NNVM_REGISTER_OP(_backward_slice_channel)
+.set_num_inputs([](const nnvm::NodeAttrs& attrs) {
+    const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+    return param.num_outputs;
+  })
+.set_num_outputs(1)
 .set_attr_parser(ParamParser<SliceChannelParam>)
 .set_attr<nnvm::TIsBackward>("TIsBackward", true)
 .set_attr<FCompute>("FCompute<cpu>", SliceChannelBackward<cpu>);

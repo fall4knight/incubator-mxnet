@@ -67,20 +67,18 @@ inline bool SliceChannelForwardInferStorageType(const nnvm::NodeAttrs& attrs,
                                          DispatchMode* dispatch_mode,
                                          std::vector<int>* in_attrs,
                                          std::vector<int>* out_attrs) {
-  CHECK_EQ(in_attrs->size(), 1);
-  CHECK_EQ(out_attrs->size(), 1);
   const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+  CHECK_EQ(in_attrs->size(), 1U);
+  CHECK_EQ(out_attrs->size(), static_cast<size_t>(param.num_outputs));
   const auto& in_stype = in_attrs->at(0);
-  auto& out_stype = out_attrs->at(0);
   bool dispatched = false;
-  const auto dispatch_ex = DispatchMode::kFComputeEx;
   if (!dispatched && in_stype == kDefaultStorage) {
     #if MXNET_USE_MKLDNN == 0
-    dispatched = storage_type_assign(&out_stype, kDefaultStorage,
+    dispatched = storage_type_assign(out_attrs, kDefaultStorage,
                                      dispatch_mode, DispatchMode::kFCompute);
     #else
-    dispatched = storage_type_assign(&out_stype, kDefaultStorage,
-                                     dispatch_mode, dispatch_ex);
+    dispatched = storage_type_assign(out_attrs, kDefaultStorage,
+                                     dispatch_mode, DispatchMode::kFCompute);
     #endif
   }
   if (!dispatched) {
@@ -90,14 +88,15 @@ inline bool SliceChannelForwardInferStorageType(const nnvm::NodeAttrs& attrs,
   return dispatched;
 }
 
-bool SliceChannelOpShape(std::vector<TShape> *in_shape,
-                        std::vector<TShape> *out_shape,
-                        std::vector<TShape> *aux_shape) const override {
+inline bool SliceChannelOpShape(const nnvm::NodeAttrs& attrs,
+                        std::vector<TShape> *in_shape,
+                        std::vector<TShape> *out_shape) {
   using namespace mshadow;
   CHECK_EQ(in_shape->size(), 1U);
   TShape dshape = in_shape->at(slice_enum::kData);
   TShape ishape = in_shape->at(slice_enum::kData);
   if (dshape.ndim() == 0) return false;
+  const SliceChannelParam& param_ = nnvm::get<SliceChannelParam>(attrs.parsed);
   if (param_.axis >= 0) {
     CHECK_LT(static_cast<size_t>(param_.axis), dshape.ndim());
   } else {
@@ -155,34 +154,36 @@ bool SliceChannelOpShape(std::vector<TShape> *in_shape,
   return true;
 }
 
-bool SliceChannelInferType(std::vector<int> *in_type,
-                std::vector<int> *out_type,
-                std::vector<int> *aux_type) const override {
+inline bool SliceChannelInferType(const nnvm::NodeAttrs& attrs,
+                          std::vector<int> *in_type,
+                          std::vector<int> *out_type) {
   CHECK_EQ(in_type->size(), 1U);
   int dtype = (*in_type)[0];
+  const SliceChannelParam& param_ = nnvm::get<SliceChannelParam>(attrs.parsed);
   CHECK_NE(dtype, -1) << "First input must have specified type";
   out_type->clear();
   out_type->reserve(param_.num_outputs);
   for (int i = 0; i < param_.num_outputs; ++i) {
     out_type->push_back(dtype);
   }
-  aux_type->clear();
+  //aux_type->clear();
   return true;
 }
 
 template<typename xpu>
-void SliceChannelForward(const OpContext &ctx,
+void SliceChannelForward(const nnvm::NodeAttrs& attrs,
+                       const OpContext &ctx,
                        const std::vector<TBlob> &in_data,
                        const std::vector<OpReqType> &req,
-                       const std::vector<TBlob> &out_data,
-                       const std::vector<TBlob> &aux_args) {
+                       const std::vector<TBlob> &out_data) {
   using namespace mshadow;
   using namespace mshadow::expr;
   CHECK_EQ(in_data.size(), 1U);
-  CHECK_EQ(out_data.size(), static_cast<size_t>(size_));
+  const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+  CHECK_EQ(out_data.size(), static_cast<size_t>(param.num_outputs));
   Stream<xpu> *s = ctx.get_stream<xpu>();
   size_t leading = 1, trailing = 1;
-  int real_axis = axis_;
+  int real_axis = param.axis;
   if (real_axis < 0) {
     real_axis += in_data[slice_enum::kData].ndim();
   }
@@ -195,30 +196,38 @@ void SliceChannelForward(const OpContext &ctx,
     trailing *= in_data[slice_enum::kData].shape_[i];
   }
   Shape<3> dshape = Shape3(leading, mid, trailing);
-  Shape<3> slice_shape = Shape3(leading, mid / size_, trailing);
+  Shape<3> slice_shape = Shape3(leading, mid / param.num_outputs, trailing);
+  MSHADOW_TYPE_SWITCH(out_data[0].type_flag_, DType, {
   Tensor<xpu, 3, DType> data = in_data[slice_enum::kData].get_with_shape<xpu, 3, DType>(
       dshape, s);
-  std::vector<Tensor<xpu, 3, DType> > outputs(size_);
-  for (int i = 0; i < size_; ++i) {
+  std::vector<Tensor<xpu, 3, DType> > outputs(param.num_outputs);
+  for (int i = 0; i < param.num_outputs; ++i) {
     outputs[i] = out_data[i].get_with_shape<xpu, 3, DType>(slice_shape, s);
   }
   Split(data, &outputs, 1, req);
+  })
+  
 }
 
-void SliceChannelBackward(const OpContext &ctx,
-                        const std::vector<TBlob> &out_grad,
+template<typename xpu>
+void SliceChannelBackward(const nnvm::NodeAttrs& attrs,
+                        const OpContext &ctx,
                         const std::vector<TBlob> &in_data,
-                        const std::vector<TBlob> &out_data,
                         const std::vector<OpReqType> &req,
-                        const std::vector<TBlob> &in_grad,
-                        const std::vector<TBlob> &aux_states) {
+                        const std::vector<TBlob> &out_data) {
   using namespace mshadow;
   using namespace mshadow::expr;
-  CHECK_EQ(out_grad.size(), static_cast<size_t>(size_));
+  const SliceChannelParam& param = nnvm::get<SliceChannelParam>(attrs.parsed);
+  std::vector<TBlob> out_grad;
+  const std::vector<TBlob> in_grad = out_data;
+  for (int i = 0; i < in_data.size(); i++) {
+    out_grad[i] = in_data[i];
+  }
+  CHECK_EQ(out_grad.size(), static_cast<size_t>(param.num_outputs));
   CHECK_EQ(in_grad.size(), 1U);
   Stream<xpu> *s = ctx.get_stream<xpu>();
   size_t leading = 1, trailing = 1;
-  int real_axis = axis_;
+  int real_axis = param.axis;
   if (real_axis < 0) {
       real_axis += in_grad[slice_enum::kData].ndim();
   }
@@ -231,14 +240,16 @@ void SliceChannelBackward(const OpContext &ctx,
     trailing *= in_grad[slice_enum::kData].shape_[i];
   }
   Shape<3> dshape = Shape3(leading, mid, trailing);
-  Shape<3> slice_shape = Shape3(leading, mid / size_, trailing);
+  Shape<3> slice_shape = Shape3(leading, mid / param.num_outputs, trailing);
+  MSHADOW_TYPE_SWITCH(out_grad[0].type_flag_, DType, {
   Tensor<xpu, 3, DType> grad = in_grad[slice_enum::kData].get_with_shape<xpu, 3, DType>(
-      dshape, s);
-  std::vector<Tensor<xpu, 3, DType> > grad_out(size_);
-  for (int i = 0; i < size_; ++i) {
+  dshape, s);
+  std::vector<Tensor<xpu, 3, DType>> grad_out(param.num_outputs);
+  for (int i = 0; i < param.num_outputs; ++i) {
     grad_out[i] = out_grad[i].get_with_shape<xpu, 3, DType>(slice_shape, s);
   }
   Concatenate(grad_out, &grad, 1, req[slice_enum::kData]);
+  })
 }
 
 // template<typename xpu, typename DType>
