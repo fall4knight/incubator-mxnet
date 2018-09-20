@@ -45,7 +45,9 @@ Operator* SliceChannelProp::CreateOperatorEx(Context ctx,
 
 DMLC_REGISTER_PARAMETER(SliceChannelParam);
 
-MXNET_REGISTER_OP_PROPERTY(SliceChannel, SliceChannelProp)
+NNVM_REGISTER_OP(SliceChannel)
+MXNET_ADD_SPARSE_OP_ALIAS(SliceChannel)
+.add_alias("split")
 .describe(R"code(Splits an array along a particular axis into multiple sub-arrays.
 
 .. note:: ``SliceChannel`` is deprecated. Use ``split`` instead.
@@ -105,11 +107,20 @@ Example::
    z[0].shape = (2 ,1 )
 
 )code" ADD_FILELINE)
+.set_attr_parser(ParamParser<SliceChannelParam>)
+.set_attr<nnvm::FInferShape>("FInferShape", SliceChannelOpShape)
+.set_attr<nnvm::FInferType>("FInferType", SliceChannelInferType)
+.set_attr<FInferStorageType>("FInferStorageType", SliceChannelForwardInferStorageType)
+.set_attr<FCompute>("FCompute<cpu>", SliceChannelForward<cpu>)
+.set_attr<FComputeEx>("FComputeEx<cpu>", SliceChannelEx<cpu>)
 .set_return_type("NDArray-or-Symbol[]")
 .add_argument("data", "NDArray-or-Symbol", "The input")
 .add_arguments(SliceChannelParam::__FIELDS__());
 
-NNVM_REGISTER_OP(SliceChannel).add_alias("split");
+NNVM_REGISTER_OP(_backward_slice_channel)
+.set_attr_parser(ParamParser<SliceChannelParam>)
+.set_attr<nnvm::TIsBackward>("TIsBackward", true)
+.set_attr<FCompute>("FCompute<cpu>", SliceChannelBackward<cpu>);
 
 }  // namespace op
 }  // namespace mxnet
