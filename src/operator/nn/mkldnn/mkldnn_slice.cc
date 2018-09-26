@@ -20,7 +20,7 @@
 /*!
  * \file mkldnn_slice.cc
  * \brief
- * \author Mengjie Li
+ * \author 
 */
 #include "./mkldnn_slice-inl.h"
 
@@ -131,33 +131,83 @@ void MKLDNNSliceChannel(const SliceChannelParam &param, const OpContext& ctx,
   const TShape oshape = out[0].shape();
   uint32_t N = oshape.ndim();
   // axis, num_outputs, squeeze_axis
-  const int axis = param.axis;
-  const int num_outputs = param.num_outputs;
-  const int squeeze_axis = param.squeeze_axis;
+  const uint32_t axis = param.axis;
+  const uint32_t num_outputs = param.num_outputs;
+  // We need to figure out whether it is actually "squeezing"
+  int squeeze_axis;
+  if (ishape.ndim() == oshape.ndim()) {
+      squeeze_axis = 0;
+  } else {
+      squeeze_axis = 1;
+  }
   
-  mkldnn::memory::dims dims(N), offsets(N);
   MKLDNNStream *stream = MKLDNNStream::Get();
+  
   // In total we have num_outputs
   // For each output, we need to set up dims and offsets in order to use view_pd
-  for (uint32_t i = 0; i < num_outputs; i++) {
-    // Set up dims and offsets
-    for (uint32_t j = 0; j < N; j++) {
-      dims[j] = oshape[j];
-      if (j == axis)  offsets[j] = oshape[j] * i;
-      else  offsets[j] = 0;
+  if (squeeze_axis == 1) { // For the case squeeze_axis == 1
+    mkldnn::memory::dims dims(N+1), offsets(N+1);
+    for (uint32_t i = 0; i < num_outputs; i++) {
+        // Set up dims and offsets
+        for (uint32_t j = 0; j < N+1; j++) {
+            if (j == axis) {
+                dims[j] = 1;
+                offsets[j] = i;
+            } else if (j < axis){
+                dims[j] = oshape[j];
+                offsets[j] = 0;
+            } else { //if j > axis
+                dims[j] = oshape[j-1];
+                offsets[j] = 0;
+            }
+        }
+        auto in_mem = in.GetMKLDNNData();
+        auto in_mem_pd = in_mem->get_primitive_desc();
+        auto out_mem_pd = out[i].GetMKLDNNData()->get_primitive_desc();
+        auto out_mem = CreateMKLDNNMem(out[i], out_mem_pd, req);
+        auto temp_dtype = static_cast<mkldnn::memory::data_type>(in_mem_pd.desc().data.data_type);
+        auto temp_format = static_cast<mkldnn::memory::format>(GetDefaultFormat(in_mem_pd.desc()));
+        mkldnn::memory::desc temp_md(dims, temp_dtype, temp_format);
+        mkldnn::memory::primitive_desc temp_pd(temp_md, in_mem_pd.get_engine());
+
+        std::shared_ptr<mkldnn::view::primitive_desc> view_pd;
+        view_pd.reset(new mkldnn::view::primitive_desc(in_mem_pd, dims, offsets));
+        // 1. Create reorder_pd based on view_pd and temp_mem_pd
+        // 2. MKLDNNCopy from temp_mem_pd to out_mem_pd
+        auto reorder_pd = reorder::primitive_desc(view_pd.get()->dst_primitive_desc(), temp_pd);
+        mkldnn_mem_ptr temp_mem(new mkldnn::memory(temp_pd, in_mem->get_data_handle()));
+        stream->RegisterMem(temp_mem);
+        stream->RegisterPrim(mkldnn::reorder(reorder_pd, *in_mem, *temp_mem));
+        stream->RegisterPrim(mkldnn::reorder(*temp_mem, *out_mem));
+        
+        //auto reorder_pd = reorder::primitive_desc(view_pd.get()->dst_primitive_desc(), out_mem_pd);
+
+        CommitOutput(out[i], out_mem);
+        // out[i] = out[i].CreateView(oshape, out[i].getDataType());
     }
-    auto in_mem = in.GetMKLDNNData();
-    auto in_mem_pd = in_mem->get_primitive_desc();
+  } else { // For the case squeeze_axis == 0
+    mkldnn::memory::dims dims(N), offsets(N);
+    for (uint32_t i = 0; i < num_outputs; i++) {
+        // Set up dims and offsets
+        for (uint32_t j = 0; j < N; j++) {
+            dims[j] = oshape[j];
+            if (j == axis)  offsets[j] = oshape[j] * i;
+            else  offsets[j] = 0;
+        }
+        auto in_mem = in.GetMKLDNNData();
+        auto in_mem_pd = in_mem->get_primitive_desc();
 
-    std::shared_ptr<mkldnn::view::primitive_desc> view_pd;
-    view_pd.reset(new mkldnn::view::primitive_desc(in_mem_pd, dims, offsets));
-    auto out_mem_pd = out[i].GetMKLDNNData()->get_primitive_desc();
-    auto out_mem = CreateMKLDNNMem(out[i], out_mem_pd, req);
-    auto reorder_pd = reorder::primitive_desc(view_pd.get()->dst_primitive_desc(), out_mem_pd);
+        std::shared_ptr<mkldnn::view::primitive_desc> view_pd;
+        view_pd.reset(new mkldnn::view::primitive_desc(in_mem_pd, dims, offsets));
+        auto out_mem_pd = out[i].GetMKLDNNData()->get_primitive_desc();
+        auto out_mem = CreateMKLDNNMem(out[i], out_mem_pd, req);
+        auto reorder_pd = reorder::primitive_desc(view_pd.get()->dst_primitive_desc(), out_mem_pd);
 
-    stream->RegisterPrim(mkldnn::reorder(reorder_pd, *in_mem, *out_mem.second));
-    CommitOutput(out[i], out_mem);
+        stream->RegisterPrim(mkldnn::reorder(reorder_pd, *in_mem, *out_mem.second));
+        CommitOutput(out[i], out_mem);
+    }
   }
+
 
   stream->Submit();
 }

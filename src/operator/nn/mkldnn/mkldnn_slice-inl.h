@@ -20,7 +20,7 @@
 /*!
  * \file mkldnn_slice-inl.h
  * \brief
- * \author Mengjie Li
+ * \author 
 */
 #include "../../tensor/matrix_op-inl.h"
 #include "./mkldnn_base-inl.h"
