@@ -78,7 +78,7 @@ inline bool SliceChannelForwardInferStorageType(const nnvm::NodeAttrs& attrs,
                                      dispatch_mode, DispatchMode::kFCompute);
     #else
     dispatched = storage_type_assign(out_attrs, kDefaultStorage,
-                                     dispatch_mode, DispatchMode::kFCompute);
+                                     dispatch_mode, DispatchMode::kFComputeEx);
     #endif
   }
   if (!dispatched) {

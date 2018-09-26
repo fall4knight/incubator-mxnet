@@ -423,7 +423,6 @@ inline bool SliceForwardInferStorageType(const nnvm::NodeAttrs& attrs,
   const auto& in_stype = in_attrs->at(0);
   auto& out_stype = out_attrs->at(0);
   bool dispatched = false;
-  const auto dispatch_ex = DispatchMode::kFComputeEx;
   // If step = 1, no need to fallback; otherwise fallback to dense
   bool trivial_step = false;
   if (param.step.ndim() == 0U) {
@@ -438,13 +437,13 @@ inline bool SliceForwardInferStorageType(const nnvm::NodeAttrs& attrs,
                                      dispatch_mode, DispatchMode::kFCompute);
     #else
     dispatched = storage_type_assign(&out_stype, kDefaultStorage,
-                                     dispatch_mode, dispatch_ex);
+                                     dispatch_mode, DispatchMode::kFComputeEx);
     #endif
   }
 
   if (!dispatched && in_stype == kCSRStorage && trivial_step) {
     dispatched = storage_type_assign(&out_stype, kCSRStorage,
-                                     dispatch_mode, dispatch_ex);
+                                     dispatch_mode, DispatchMode::kFComputeEx);
   }
 
   if (!dispatched) {
